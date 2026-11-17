@@ -280,7 +280,7 @@ fun CandleChart(data: ChartUi, modifier: Modifier = Modifier) {
 
                 val tt = tf.format(Date(hc.openTime))
                 val ttw = labelPaint.measureText(tt)
-                it.nativeCanvas.drawRect(cp.x - ttw / 2 - 8f, h - 18f * d, cp.x + ttw / 2 + 8f, h, tagBgPaint)
+                it.nativeCanvas.drawRect(cp.x - ttw / 2 - 8f, h - 18f * d, cp.x + ttw / 2 + 8f, h.toFloat(), tagBgPaint)
                 it.nativeCanvas.drawText(tt, cp.x - ttw / 2, h - 6f * d, tagTextPaint)
             }
         }
