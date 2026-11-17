@@ -1,29 +1,33 @@
 package com.ferdausfs.tradedesk.ui
 
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 
-val Bg = Color(0xFF0B0E11)
-val PanelC = Color(0xFF121820)
-val TextC = Color(0xFFD1D4DC)
+// light "cream" palette (own implementation, charting-app feel)
+val Bg = Color(0xFFF1E6CF)      // cream background
+val PanelC = Color(0xFFFFFFFF)  // white panels
+val SheetC = Color(0xFFFFFFFF)  // bottom sheets
+val ChipBg = Color(0xFFE0E3EB)  // unselected chips / small buttons
+val DarkC = Color(0xFF131722)   // nav bar + left toolbar
+val TextC = Color(0xFF131722)
 val MutedC = Color(0xFF787B86)
-val AccentC = Color(0xFF4A90E2)
-val UpC = Color(0xFF26A69A)
-val DownC = Color(0xFFEF5350)
+val AccentC = Color(0xFF2962FF)
+val UpC = Color(0xFF089981)
+val DownC = Color(0xFFF23645)
 
 @Composable
 fun TradeDeskTheme(content: @Composable () -> Unit) {
     MaterialTheme(
-        colorScheme = darkColorScheme(
+        colorScheme = lightColorScheme(
             background = Bg,
             surface = PanelC,
             primary = AccentC,
             onBackground = TextC,
             onSurface = TextC,
             onPrimary = Color.White,
-            outline = Color(0xFF2A2E39)
+            outline = MutedC
         ),
         content = content
     )

@@ -1,6 +1,7 @@
 package com.ferdausfs.tradedesk.chart
 
 import android.graphics.Paint
+import android.graphics.Typeface
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -38,25 +39,34 @@ data class ChartUi(
     val bbUpper: List<Double?> = emptyList(),
     val bbLower: List<Double?> = emptyList(),
     val rsi: List<Double?> = emptyList(),
-    val daily: Boolean = false
+    val daily: Boolean = false,
+    val intervalSec: Int = 900
 )
 
-private val GridC = Color(0xFF1E232B)
+// light cream chart palette (own implementation)
+private val GridC = Color(0xFFE2D7BE)
 private val AxisC = Color(0xFF787B86)
-private val CrossC = Color(0xFF9AA0AA)
-private val UpC = Color(0xFF26A69A)
-private val DownC = Color(0xFFEF5350)
-private val EmaC = Color(0xFFF5A623)
-private val BbC = Color(0xFF4A90E2)
-private val RsiC = Color(0xFFB388FF)
-private val DrawC = Color(0xFF4A90E2)
-private val TagBg = Color(0xFF2A2E39)
-private val TagText = Color(0xFFE8EAED)
+private val CrossC = Color(0xFF9598A1)
+private val BodyUpC = Color.White        // up candle: white body
+private val DownBodyC = Color(0xFF131722) // down candle: black body
+private val BorderC = Color(0xFF131722)  // black wicks + borders
+private val EmaC = Color(0xFFE8A33D)
+private val BbC = Color(0xFF2962FF)
+private val RsiC = Color(0xFF8E24AA)
+private val DrawC = Color(0xFF2962FF)
+private val TagBg = Color(0xFFC8CBD6)
+private val TagText = Color(0xFF131722)
 
 fun fmtPrice(v: Double): String = when {
     v >= 1000 -> String.format(Locale.US, "%.2f", v)
     v >= 1 -> String.format(Locale.US, "%.4f", v)
     else -> String.format(Locale.US, "%.6f", v)
+}
+
+private fun fmtCountdown(sec: Long): String = when {
+    sec >= 86400 -> String.format(Locale.US, "%dd %dh", sec / 86400, (sec % 86400) / 3600)
+    sec >= 3600 -> String.format(Locale.US, "%d:%02d:%02d", sec / 3600, (sec % 3600) / 60, sec % 60)
+    else -> String.format(Locale.US, "%02d:%02d", sec / 60, sec % 60)
 }
 
 private class ViewParams {
@@ -112,6 +122,21 @@ fun CandleChart(
         Paint().apply {
             color = TagText.toArgb()
             textSize = 10f * d
+            isAntiAlias = true
+        }
+    }
+    val tagPricePaint = remember {
+        Paint().apply {
+            color = TagText.toArgb()
+            textSize = 11f * d
+            typeface = Typeface.DEFAULT_BOLD
+            isAntiAlias = true
+        }
+    }
+    val tagCntPaint = remember {
+        Paint().apply {
+            color = TagText.toArgb()
+            textSize = 9f * d
             isAntiAlias = true
         }
     }
@@ -262,19 +287,19 @@ fun CandleChart(
         val bodyW = (pxPer * 0.62f).coerceAtLeast(1f)
         for (i in first..lastI) {
             val c = list[i]
-            val col = if (c.close >= c.open) UpC else DownC
             val vh = if (maxVol > 0) (c.volume / maxVol * (volH - 2f)).toFloat() else 0f
             drawRect(
-                col.copy(alpha = 0.55f),
+                BorderC.copy(alpha = 0.25f),
                 Offset(xOf(i) - bodyW / 2, volBase - vh),
                 Size(bodyW, vh)
             )
         }
 
-        // candles
+        // candles: white bodies with black border (up) / solid black (down)
         for (i in first..lastI) {
             val c = list[i]
-            val col = if (c.close >= c.open) UpC else DownC
+            val up = c.close >= c.open
+            val fill = if (up) BodyUpC else DownBodyC
             val xx = xOf(i)
             val yH = yOf(c.high)
             val yL = yOf(c.low)
@@ -282,11 +307,14 @@ fun CandleChart(
             val yC = yOf(c.close)
             val top = minOf(yO, yC)
             val bot = maxOf(yO, yC)
-            drawLine(col, Offset(xx, yH), Offset(xx, maxOf(yL, top)), 1.2f)
-            if (bot - top < 1.2f) {
-                drawRect(col, Offset(xx - bodyW / 2, top), Size(bodyW, 1.5f))
+            drawLine(BorderC, Offset(xx, yH), Offset(xx, maxOf(yL, top)), 1f)
+            if (bot - top < 1.5f) {
+                val t2 = top - 0.5f
+                drawRect(fill, Offset(xx - bodyW / 2, t2), Size(bodyW, 1.5f))
+                drawRect(BorderC, Offset(xx - bodyW / 2, t2), Size(bodyW, 1.5f), style = Stroke(1f))
             } else {
-                drawRect(col, Offset(xx - bodyW / 2, top), Size(bodyW, bot - top))
+                drawRect(fill, Offset(xx - bodyW / 2, top), Size(bodyW, bot - top))
+                drawRect(BorderC, Offset(xx - bodyW / 2, top), Size(bodyW, bot - top), style = Stroke(1f))
             }
         }
 
@@ -351,19 +379,25 @@ fun CandleChart(
             drawLine(DrawC.copy(alpha = 0.6f), s, e, 1.4f)
         }
 
-        // last price line + right tag
+        // last price line + right tag: price + countdown to candle close
         val lc = list.last()
         val ly = yOf(lc.close)
-        val lcol = if (lc.close >= lc.open) UpC else DownC
         drawLine(
-            lcol, Offset(0f, ly), Offset(widthF, ly), 1f,
+            AxisC, Offset(0f, ly), Offset(widthF, ly), 1f,
             pathEffect = PathEffect.dashPathEffect(floatArrayOf(8f, 6f))
         )
         drawIntoCanvas {
             val txt = fmtPrice(lc.close)
-            val tw = labelPaint.measureText(txt)
-            it.nativeCanvas.drawRect(widthF - tw - 12f, ly - 10f * d, widthF, ly + 10f * d, tagBgPaint)
-            it.nativeCanvas.drawText(txt, widthF - tw - 6f, ly + 4f * d, tagTextPaint)
+            val remain = ((lc.openTime + data.intervalSec * 1000L - System.currentTimeMillis()) / 1000L)
+                .coerceAtLeast(0L)
+            val cnt = fmtCountdown(remain)
+            val pw = tagPricePaint.measureText(txt)
+            val cw = tagCntPaint.measureText(cnt)
+            val tw = maxOf(pw, cw)
+            val tagH = 30f * d
+            it.nativeCanvas.drawRect(widthF - tw - 12f, ly - tagH / 2, widthF, ly + tagH / 2, tagBgPaint)
+            it.nativeCanvas.drawText(txt, widthF - pw - 6f, ly - 2f * d, tagPricePaint)
+            it.nativeCanvas.drawText(cnt, widthF - cw - 6f, ly + 10f * d, tagCntPaint)
         }
 
         // time labels

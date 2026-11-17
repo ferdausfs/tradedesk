@@ -22,8 +22,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.CandlestickChart
 import androidx.compose.material.icons.filled.Close
@@ -44,6 +45,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
@@ -77,6 +79,10 @@ import kotlinx.coroutines.delay
 import java.util.Locale
 
 private val INTERVALS = listOf("1m", "5m", "15m", "1h", "4h", "1d", "1w")
+private val INTERVAL_SEC = mapOf(
+    "1m" to 60, "5m" to 300, "15m" to 900, "1h" to 3600,
+    "4h" to 14400, "1d" to 86400, "1w" to 604800
+)
 
 @Composable
 fun MainScreen() {
@@ -96,24 +102,34 @@ fun MainScreen() {
     Scaffold(
         containerColor = Bg,
         bottomBar = {
-            NavigationBar(containerColor = PanelC) {
+            NavigationBar(containerColor = DarkC) {
+                val navColors = NavigationBarItemDefaults.colors(
+                    selectedIconColor = Color.White,
+                    selectedTextColor = Color.White,
+                    unselectedIconColor = MutedC,
+                    unselectedTextColor = MutedC,
+                    indicatorColor = AccentC.copy(alpha = 0.30f)
+                )
                 NavigationBarItem(
                     selected = tab == 0,
                     onClick = { tab = 0 },
                     icon = { Icon(Icons.Filled.CandlestickChart, contentDescription = null) },
-                    label = { Text("Chart") }
+                    label = { Text("Chart") },
+                    colors = navColors
                 )
                 NavigationBarItem(
                     selected = tab == 1,
                     onClick = { tab = 1 },
                     icon = { Icon(Icons.Filled.List, contentDescription = null) },
-                    label = { Text("Watchlist") }
+                    label = { Text("Watchlist") },
+                    colors = navColors
                 )
                 NavigationBarItem(
                     selected = tab == 2,
                     onClick = { tab = 2 },
                     icon = { Icon(Icons.Filled.Notifications, contentDescription = null) },
-                    label = { Text("Alerts") }
+                    label = { Text("Alerts") },
+                    colors = navColors
                 )
             }
         }
@@ -201,12 +217,12 @@ private fun ChartTab(vm: MainViewModel, onOpenSearch: () -> Unit, onOpenIndicato
                 val sel = itv == interval
                 Text(
                     itv,
-                    color = if (sel) Bg else TextC,
+                    color = if (sel) Color.White else TextC,
                     fontWeight = FontWeight.Bold,
                     fontSize = 12.sp,
                     modifier = Modifier
                         .padding(end = 6.dp)
-                        .background(if (sel) AccentC else PanelC, MaterialTheme.shapes.small)
+                        .background(if (sel) DarkC else ChipBg, MaterialTheme.shapes.small)
                         .clickable { vm.setInterval(itv) }
                         .padding(horizontal = 12.dp, vertical = 6.dp)
                 )
@@ -236,7 +252,8 @@ private fun ChartTab(vm: MainViewModel, onOpenSearch: () -> Unit, onOpenIndicato
                     bbUpper = if (bbOn) bb.first else emptyList(),
                     bbLower = if (bbOn) bb.third else emptyList(),
                     rsi = if (rsiOn) rsi(closes) else emptyList(),
-                    daily = interval == "1d" || interval == "1w"
+                    daily = interval == "1d" || interval == "1w",
+                    intervalSec = INTERVAL_SEC[interval] ?: 900
                 )
             }
             CandleChart(
@@ -252,25 +269,26 @@ private fun ChartTab(vm: MainViewModel, onOpenSearch: () -> Unit, onOpenIndicato
                     color = AccentC, strokeWidth = 2.dp
                 )
             }
-            if (drawMode) {
-                Row(
-                    Modifier.align(Alignment.TopEnd).padding(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    SmallBtn("Undo") { vm.undoLine() }
-                    Spacer(Modifier.width(4.dp))
-                    SmallBtn("Clear") { vm.clearLines() }
-                }
-            }
 
-            // floating tool buttons (right edge)
-            Column(
-                Modifier.align(Alignment.CenterEnd).padding(end = 6.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
+            // left dark toolbar (draw / tools)
+            Surface(
+                shape = RoundedCornerShape(10.dp),
+                color = DarkC.copy(alpha = 0.97f),
+                shadowElevation = 4.dp,
+                modifier = Modifier
+                    .align(Alignment.CenterStart)
+                    .padding(start = 6.dp)
             ) {
-                FabMini(Icons.Filled.Tune, false) { onOpenIndicators() }
-                FabMini(Icons.Filled.Replay, replay) { vm.toggleReplay() }
-                FabMini(Icons.Filled.Edit, drawMode) { vm.toggleDraw() }
+                Column(
+                    Modifier.padding(vertical = 6.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    ToolBtn(Icons.Filled.Tune, false) { onOpenIndicators() }
+                    ToolBtn(Icons.Filled.Replay, replay) { vm.toggleReplay() }
+                    ToolBtn(Icons.Filled.Edit, drawMode) { vm.toggleDraw() }
+                    ToolBtn(Icons.AutoMirrored.Filled.Undo, false) { vm.undoLine() }
+                    ToolBtn(Icons.Filled.Delete, false) { vm.clearLines() }
+                }
             }
 
             // replay controls (bottom overlay)
@@ -279,7 +297,7 @@ private fun ChartTab(vm: MainViewModel, onOpenSearch: () -> Unit, onOpenIndicato
                     Modifier
                         .align(Alignment.BottomCenter)
                         .padding(bottom = 10.dp)
-                        .background(PanelC.copy(alpha = 0.95f), MaterialTheme.shapes.small)
+                        .background(DarkC.copy(alpha = 0.95f), MaterialTheme.shapes.small)
                         .padding(horizontal = 10.dp, vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -291,7 +309,7 @@ private fun ChartTab(vm: MainViewModel, onOpenSearch: () -> Unit, onOpenIndicato
                     Spacer(Modifier.width(8.dp))
                     Text(
                         "${replayIdx.coerceAtMost(candles.size)} / ${candles.size}",
-                        color = MutedC, fontSize = 11.sp
+                        color = Color.White, fontSize = 11.sp
                     )
                     Spacer(Modifier.weight(1f))
                     SmallBtn("Exit") { vm.toggleReplay() }
@@ -460,7 +478,7 @@ private fun IndicatorsSheet(vm: MainViewModel, onClose: () -> Unit) {
     val emaOn by vm.emaOn.collectAsState()
     val bbOn by vm.bbOn.collectAsState()
     val rsiOn by vm.rsiOn.collectAsState()
-    ModalBottomSheet(onDismissRequest = onClose, containerColor = PanelC) {
+    ModalBottomSheet(onDismissRequest = onClose, containerColor = SheetC) {
         Text(
             "Indicators", color = TextC, fontWeight = FontWeight.Bold, fontSize = 15.sp,
             modifier = Modifier.padding(16.dp)
@@ -489,7 +507,7 @@ private fun SearchSheet(vm: MainViewModel, onClose: () -> Unit) {
     var q by remember { mutableStateOf("") }
     val allSymbols by vm.allSymbols.collectAsState()
     LaunchedEffect(Unit) { vm.loadSymbols() }
-    ModalBottomSheet(onDismissRequest = onClose, containerColor = PanelC) {
+    ModalBottomSheet(onDismissRequest = onClose, containerColor = SheetC) {
         OutlinedTextField(
             value = q,
             onValueChange = { q = it },
@@ -518,18 +536,17 @@ private fun SearchSheet(vm: MainViewModel, onClose: () -> Unit) {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun FabMini(icon: ImageVector, active: Boolean, onClick: () -> Unit) {
-    Surface(
-        shape = CircleShape,
-        color = if (active) AccentC else PanelC.copy(alpha = 0.92f),
-        onClick = onClick,
-        modifier = Modifier.padding(vertical = 5.dp)
+private fun ToolBtn(icon: ImageVector, active: Boolean, onClick: () -> Unit) {
+    Box(
+        Modifier
+            .padding(vertical = 3.dp, horizontal = 6.dp)
+            .size(34.dp)
+            .background(if (active) AccentC else Color.Transparent, MaterialTheme.shapes.small)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
     ) {
-        Box(Modifier.size(38.dp), contentAlignment = Alignment.Center) {
-            Icon(icon, contentDescription = null, tint = if (active) Bg else TextC, modifier = Modifier.size(20.dp))
-        }
+        Icon(icon, contentDescription = null, tint = Color.White, modifier = Modifier.size(19.dp))
     }
 }
 
@@ -541,7 +558,7 @@ private fun SmallBtn(label: String, onClick: () -> Unit) {
         fontSize = 12.sp,
         fontWeight = FontWeight.Bold,
         modifier = Modifier
-            .background(PanelC, MaterialTheme.shapes.small)
+            .background(ChipBg, MaterialTheme.shapes.small)
             .clickable(onClick = onClick)
             .padding(horizontal = 10.dp, vertical = 4.dp)
     )
