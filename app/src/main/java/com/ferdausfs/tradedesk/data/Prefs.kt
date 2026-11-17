@@ -18,6 +18,7 @@ class Prefs(ctx: Context) {
     private val json = Json { ignoreUnknownKeys = true }
     private val strList = ListSerializer(String.serializer())
     private val alertList = ListSerializer(Alert.serializer())
+    private val lineList = ListSerializer(TrendLine.serializer())
 
     private val defaultWatch = listOf(
         "BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "DOGEUSDT", "XRPUSDT"
@@ -39,6 +40,10 @@ class Prefs(ctx: Context) {
         get() = sp.getBoolean("bbOn", false)
         set(v) = sp.edit().putBoolean("bbOn", v).apply()
 
+    var rsiOn: Boolean
+        get() = sp.getBoolean("rsiOn", false)
+        set(v) = sp.edit().putBoolean("rsiOn", v).apply()
+
     fun watchlist(): List<String> {
         val raw = sp.getString("watchlist", null) ?: return defaultWatch
         return runCatching { json.decodeFromString(strList, raw) }.getOrDefault(defaultWatch)
@@ -55,5 +60,14 @@ class Prefs(ctx: Context) {
 
     fun setAlerts(v: List<Alert>) {
         sp.edit().putString("alerts", json.encodeToString(alertList, v)).apply()
+    }
+
+    fun linesFor(key: String): List<TrendLine> {
+        val raw = sp.getString("lines_$key", null) ?: return emptyList()
+        return runCatching { json.decodeFromString(lineList, raw) }.getOrDefault(emptyList())
+    }
+
+    fun setLinesFor(key: String, v: List<TrendLine>) {
+        sp.edit().putString("lines_$key", json.encodeToString(lineList, v)).apply()
     }
 }

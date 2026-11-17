@@ -51,3 +51,26 @@ fun bollinger(v: List<Double>, p: Int = 20, m: Double = 2.0): Triple<List<Double
     }
     return Triple(up.toList(), mid, low.toList())
 }
+
+fun rsi(v: List<Double>, p: Int = 14): List<Double?> {
+    val r = arrayOfNulls<Double>(v.size)
+    if (v.size <= p) return r.toList()
+    var g = 0.0
+    var l = 0.0
+    for (i in 1..p) {
+        val d = v[i] - v[i - 1]
+        if (d > 0) g += d else l -= d
+    }
+    g /= p
+    l /= p
+    r[p] = if (l == 0.0) 100.0 else 100 - 100 / (1 + g / l)
+    for (i in p + 1 until v.size) {
+        val d = v[i] - v[i - 1]
+        val up = if (d > 0) d else 0.0
+        val dn = if (d < 0) -d else 0.0
+        g = (g * (p - 1) + up) / p
+        l = (l * (p - 1) + dn) / p
+        r[i] = if (l == 0.0) 100.0 else 100 - 100 / (1 + g / l)
+    }
+    return r.toList()
+}

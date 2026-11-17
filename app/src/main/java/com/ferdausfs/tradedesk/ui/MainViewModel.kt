@@ -2,6 +2,7 @@ package com.ferdausfs.tradedesk.ui
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.ferdausfs.tradedesk.data.TrendLine
 import com.ferdausfs.tradedesk.data.Alert
 import com.ferdausfs.tradedesk.data.Binance
 import com.ferdausfs.tradedesk.data.Candle
@@ -33,6 +34,8 @@ class MainViewModel(private val prefs: Prefs) : ViewModel() {
     val emaOn: StateFlow<Boolean> = _emaOn.asStateFlow()
     private val _bbOn = MutableStateFlow(prefs.bbOn)
     val bbOn: StateFlow<Boolean> = _bbOn.asStateFlow()
+    private val _rsiOn = MutableStateFlow(prefs.rsiOn)
+    val rsiOn: StateFlow<Boolean> = _rsiOn.asStateFlow()
     private val _watchlist = MutableStateFlow(prefs.watchlist())
     val watchlist: StateFlow<List<String>> = _watchlist.asStateFlow()
     private val _tickers = MutableStateFlow<Map<String, Ticker>>(emptyMap())
@@ -41,6 +44,19 @@ class MainViewModel(private val prefs: Prefs) : ViewModel() {
     val alerts: StateFlow<List<Alert>> = _alerts.asStateFlow()
     private val _allSymbols = MutableStateFlow<List<String>>(emptyList())
     val allSymbols: StateFlow<List<String>> = _allSymbols.asStateFlow()
+
+    private val _replay = MutableStateFlow(false)
+    val replay: StateFlow<Boolean> = _replay.asStateFlow()
+    private val _replayIdx = MutableStateFlow(0)
+    val replayIdx: StateFlow<Int> = _replayIdx.asStateFlow()
+    private val _playing = MutableStateFlow(false)
+    val playing: StateFlow<Boolean> = _playing.asStateFlow()
+    private var replayJob: Job? = null
+
+    private val _lines = MutableStateFlow<List<TrendLine>>(emptyList())
+    val lines: StateFlow<List<TrendLine>> = _lines.asStateFlow()
+    private val _drawMode = MutableStateFlow(false)
+    val drawMode: StateFlow<Boolean> = _drawMode.asStateFlow()
 
     var onAlertFired: ((String, Double) -> Unit)? = null
 
@@ -53,6 +69,7 @@ class MainViewModel(private val prefs: Prefs) : ViewModel() {
 
     fun setInterval(v: String) {
         if (v == _interval.value) return
+        exitReplay()
         _interval.value = v
         prefs.interval = v
         load()
@@ -60,6 +77,7 @@ class MainViewModel(private val prefs: Prefs) : ViewModel() {
 
     fun setSymbol(v: String) {
         if (v == _symbol.value) return
+        exitReplay()
         _symbol.value = v
         prefs.symbol = v
         _ticker.value = null
@@ -74,6 +92,89 @@ class MainViewModel(private val prefs: Prefs) : ViewModel() {
     fun toggleBb() {
         _bbOn.value = !_bbOn.value
         prefs.bbOn = _bbOn.value
+    }
+
+    fun toggleRsi() {
+        _rsiOn.value = !_rsiOn.value
+        prefs.rsiOn = _rsiOn.value
+    }
+
+    fun toggleDraw() {
+        _drawMode.value = !_drawMode.value
+    }
+
+    fun addLine(x1: Float, p1: Double, x2: Float, p2: Double) {
+        val key = _symbol.value + "|" + _interval.value
+        val nv = _lines.value + TrendLine(x1, p1, x2, p2)
+        _lines.value = nv
+        prefs.setLinesFor(key, nv)
+        _drawMode.value = false
+    }
+
+    fun undoLine() {
+        val key = _symbol.value + "|" + _interval.value
+        if (_lines.value.isNotEmpty()) {
+            val nv = _lines.value.dropLast(1)
+            _lines.value = nv
+            prefs.setLinesFor(key, nv)
+        }
+    }
+
+    fun clearLines() {
+        val key = _symbol.value + "|" + _interval.value
+        _lines.value = emptyList()
+        prefs.setLinesFor(key, emptyList())
+    }
+
+    fun toggleReplay() {
+        if (!_replay.value) {
+            val n = _candles.value.size
+            if (n < 40) return
+            _replay.value = true
+            isPlaying = false
+            replayJob?.cancel()
+            _replayIdx.value = (n * 0.7f).toInt().coerceIn(30, n - 1)
+        } else {
+            exitReplay()
+        }
+    }
+
+    private var isPlaying = false
+
+    private fun exitReplay() {
+        _replay.value = false
+        isPlaying = false
+        _playing.value = false
+        replayJob?.cancel()
+    }
+
+    fun playPauseReplay() {
+        isPlaying = !isPlaying
+        _playing.value = isPlaying
+        replayJob?.cancel()
+        if (isPlaying) {
+            replayJob = viewModelScope.launch {
+                while (isPlaying && _replay.value && _replayIdx.value < _candles.value.size) {
+                    _replayIdx.value = _replayIdx.value + 1
+                    delay(400)
+                }
+            }
+        }
+    }
+
+    fun stepReplay() {
+        isPlaying = false
+        _playing.value = false
+        replayJob?.cancel()
+        _replayIdx.value = (_replayIdx.value + 1).coerceAtMost(_candles.value.size)
+    }
+
+    fun resetReplay() {
+        isPlaying = false
+        _playing.value = false
+        replayJob?.cancel()
+        val n = _candles.value.size
+        _replayIdx.value = (n * 0.7f).toInt().coerceIn(30, (n - 1).coerceAtLeast(1))
     }
 
     fun addWatch(s: String) {
@@ -125,6 +226,8 @@ class MainViewModel(private val prefs: Prefs) : ViewModel() {
         _loading.value = true
         val sym = _symbol.value
         val itv = _interval.value
+        _lines.value = prefs.linesFor(sym + "|" + itv)
+        _drawMode.value = false
         viewModelScope.launch {
             runCatching { binance.klines(sym, itv) }.onSuccess { list ->
                 if (sym == _symbol.value && itv == _interval.value) {
@@ -133,6 +236,7 @@ class MainViewModel(private val prefs: Prefs) : ViewModel() {
                     wsJob?.cancel()
                     wsJob = viewModelScope.launch {
                         binance.klineFlow(sym, itv).collect { c ->
+                            if (_replay.value) return@collect
                             val cur = _candles.value
                             if (cur.isEmpty()) {
                                 _candles.value = listOf(c)

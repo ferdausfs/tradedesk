@@ -27,6 +27,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import com.ferdausfs.tradedesk.data.Candle
+import com.ferdausfs.tradedesk.data.TrendLine
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -36,6 +37,7 @@ data class ChartUi(
     val ema: List<Double?> = emptyList(),
     val bbUpper: List<Double?> = emptyList(),
     val bbLower: List<Double?> = emptyList(),
+    val rsi: List<Double?> = emptyList(),
     val daily: Boolean = false
 )
 
@@ -46,6 +48,8 @@ private val UpC = Color(0xFF26A69A)
 private val DownC = Color(0xFFEF5350)
 private val EmaC = Color(0xFFF5A623)
 private val BbC = Color(0xFF4A90E2)
+private val RsiC = Color(0xFFB388FF)
+private val DrawC = Color(0xFF4A90E2)
 private val TagBg = Color(0xFF2A2E39)
 private val TagText = Color(0xFFE8EAED)
 
@@ -55,8 +59,24 @@ fun fmtPrice(v: Double): String = when {
     else -> String.format(Locale.US, "%.6f", v)
 }
 
+private class ViewParams {
+    var left = 0f
+    var priceTop = 0f
+    var priceH = 1f
+    var loP = 0.0
+    var hiP = 1.0
+    var px = 8f
+    var count = 0
+}
+
 @Composable
-fun CandleChart(data: ChartUi, modifier: Modifier = Modifier) {
+fun CandleChart(
+    data: ChartUi,
+    lines: List<TrendLine> = emptyList(),
+    drawMode: Boolean = false,
+    onDrawLine: (Float, Double, Float, Double) -> Unit = { _, _, _, _ -> },
+    modifier: Modifier = Modifier
+) {
 
     val density = LocalDensity.current
     val d = density.density
@@ -68,8 +88,10 @@ fun CandleChart(data: ChartUi, modifier: Modifier = Modifier) {
     var rightIdx by remember { mutableFloatStateOf(0f) }
     var follow by remember { mutableStateOf(true) }
     var cross by remember { mutableStateOf<Offset?>(null) }
+    var preview by remember { mutableStateOf<Pair<Offset, Offset>?>(null) }
     var w by remember { mutableIntStateOf(0) }
     var h by remember { mutableIntStateOf(0) }
+    val vp = remember { ViewParams() }
 
     val labelPaint = remember {
         Paint().apply {
@@ -78,9 +100,14 @@ fun CandleChart(data: ChartUi, modifier: Modifier = Modifier) {
             isAntiAlias = true
         }
     }
-    val tagBgPaint = remember {
-        Paint().apply { color = TagBg.toArgb() }
+    val rsiPaint = remember {
+        Paint().apply {
+            color = RsiC.toArgb()
+            textSize = 10f * d
+            isAntiAlias = true
+        }
     }
+    val tagBgPaint = remember { Paint().apply { color = TagBg.toArgb() } }
     val tagTextPaint = remember {
         Paint().apply {
             color = TagText.toArgb()
@@ -93,60 +120,98 @@ fun CandleChart(data: ChartUi, modifier: Modifier = Modifier) {
         else SimpleDateFormat("HH:mm", Locale.US)
     }
 
+    fun priceAt(y: Float): Double {
+        val yy = y.coerceIn(vp.priceTop, vp.priceTop + vp.priceH)
+        return vp.loP + (vp.priceTop + vp.priceH - yy) / vp.priceH * (vp.hiP - vp.loP)
+    }
+
+    fun idxAt(x: Float): Float =
+        (vp.left + x / vp.px).coerceIn(0f, (vp.count - 1).coerceAtLeast(0).toFloat())
+
     Canvas(
         modifier
             .onSizeChanged { w = it.width; h = it.height }
-            .pointerInput(Unit) {
+            .pointerInput(drawMode) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
                     cross = down.position
-                    var prevX = down.position.x
-                    var prevDist = 0f
-                    while (true) {
-                        val ev = awaitPointerEvent()
-                        val pressed = ev.changes.filter { it.pressed }
-                        if (pressed.isEmpty()) break
-                        if (pressed.size >= 2) {
-                            val a = pressed[0].position
-                            val b = pressed[1].position
-                            val dist = (a - b).getDistance().coerceAtLeast(1f)
-                            if (prevDist > 0f) {
-                                val f = (dist / prevDist).coerceIn(0.6f, 1.6f)
-                                pxPer = (pxPer * f).coerceIn(minPx, maxPx)
-                            }
-                            prevDist = dist
-                            prevX = pressed[0].position.x
-                        } else {
-                            val p = pressed[0]
-                            val dx = p.position.x - prevX
-                            prevX = p.position.x
-                            if (prevDist > 0f) prevDist = 0f
-                            val vis = w / pxPer
-                            val base = if (follow) data.candles.size.toFloat() else rightIdx
-                            val r = base - dx / pxPer
-                            if (r >= data.candles.size) {
-                                follow = true
-                            } else {
-                                follow = false
-                                rightIdx = r.coerceIn(vis * 0.2f, data.candles.size + vis)
+                    if (drawMode) {
+                        val start = down.position
+                        var cur = start
+                        while (true) {
+                            val ev = awaitPointerEvent()
+                            val pressed = ev.changes.filter { it.pressed }
+                            if (pressed.isEmpty()) break
+                            cur = pressed[0].position
+                            cross = cur
+                            preview = Pair(start, cur)
+                            ev.changes.forEach { it.consume() }
+                        }
+                        preview = null
+                        val dx = cur.x - start.x
+                        val dy = cur.y - start.y
+                        if (dx * dx + dy * dy > 400f && vp.count > 0) {
+                            val p1 = priceAt(start.y)
+                            val p2 = priceAt(cur.y)
+                            if (p1.isFinite() && p2.isFinite()) {
+                                onDrawLine(idxAt(start.x), p1, idxAt(cur.x), p2)
                             }
                         }
-                        cross = pressed.last().position
-                        ev.changes.forEach { it.consume() }
+                        cross = null
+                    } else {
+                        var prevX = down.position.x
+                        var prevDist = 0f
+                        while (true) {
+                            val ev = awaitPointerEvent()
+                            val pressed = ev.changes.filter { it.pressed }
+                            if (pressed.isEmpty()) break
+                            if (pressed.size >= 2) {
+                                val a = pressed[0].position
+                                val b = pressed[1].position
+                                val dist = (a - b).getDistance().coerceAtLeast(1f)
+                                if (prevDist > 0f) {
+                                    val f = (dist / prevDist).coerceIn(0.6f, 1.6f)
+                                    pxPer = (pxPer * f).coerceIn(minPx, maxPx)
+                                }
+                                prevDist = dist
+                                prevX = pressed[0].position.x
+                            } else {
+                                val p = pressed[0]
+                                val dx = p.position.x - prevX
+                                prevX = p.position.x
+                                if (prevDist > 0f) prevDist = 0f
+                                val vis = w / pxPer
+                                val base = if (follow) data.candles.size.toFloat() else rightIdx
+                                val r = base - dx / pxPer
+                                if (r >= data.candles.size) {
+                                    follow = true
+                                } else {
+                                    follow = false
+                                    rightIdx = r.coerceIn(vis * 0.2f, data.candles.size + vis)
+                                }
+                            }
+                            cross = pressed.last().position
+                            ev.changes.forEach { it.consume() }
+                        }
+                        cross = null
                     }
-                    cross = null
                 }
             }
     ) {
         val list = data.candles
         if (list.isEmpty() || w == 0 || h == 0) return@Canvas
 
+        val hasRsi = data.rsi.isNotEmpty()
         val volH = h * 0.14f
+        val rsiH = if (hasRsi) h * 0.13f else 0f
         val axisB = 18f * d
         val priceTop = 6f * d
-        val priceH = (h - volH - axisB - priceTop - 4f * d).coerceAtLeast(10f)
+        val priceH = (h - volH - rsiH - axisB - priceTop - 8f * d).coerceAtLeast(10f)
         val priceBottom = priceTop + priceH
         val volBase = priceBottom + 4f * d + volH
+        val rsiTop = volBase + (if (hasRsi) 6f * d else 0f)
+        val rsiBottom = rsiTop + rsiH
+        val crossBottom = if (hasRsi) rsiBottom else volBase
         val widthF = w.toFloat()
 
         val vis = widthF / pxPer
@@ -169,7 +234,16 @@ fun CandleChart(data: ChartUi, modifier: Modifier = Modifier) {
         fun yOf(v: Double): Float =
             (priceBottom - ((v - loP) / (hiP - loP)) * priceH).toFloat()
 
-        fun xOf(i: Int): Float = ((i + 0.5f - left) * pxPer)
+        fun xOfF(i: Float): Float = ((i + 0.5f - left) * pxPer)
+        fun xOf(i: Int): Float = xOfF(i.toFloat())
+
+        vp.left = left
+        vp.priceTop = priceTop
+        vp.priceH = priceH
+        vp.loP = loP
+        vp.hiP = hiP
+        vp.px = pxPer
+        vp.count = list.size
 
         // horizontal grid + price labels
         val steps = 4
@@ -216,7 +290,7 @@ fun CandleChart(data: ChartUi, modifier: Modifier = Modifier) {
             }
         }
 
-        // overlay lines
+        // overlay lines (EMA / Bollinger)
         fun pathOf(vals: List<Double?>, color: Color, width: Float) {
             if (vals.isEmpty()) return
             val p = Path()
@@ -236,6 +310,45 @@ fun CandleChart(data: ChartUi, modifier: Modifier = Modifier) {
         if (data.bbUpper.isNotEmpty() || data.bbLower.isNotEmpty()) {
             pathOf(data.bbUpper, BbC, 1.2f)
             pathOf(data.bbLower, BbC, 1.2f)
+        }
+
+        // RSI pane
+        if (hasRsi) {
+            fun yR(v: Double): Float = (rsiBottom - (v / 100.0) * rsiH).toFloat()
+            drawLine(GridC, Offset(0f, rsiTop - 3f * d), Offset(widthF, rsiTop - 3f * d), 1f)
+            drawLine(GridC.copy(alpha = 0.6f), Offset(0f, yR(70.0)), Offset(widthF, yR(70.0)), 1f)
+            drawLine(GridC.copy(alpha = 0.6f), Offset(0f, yR(30.0)), Offset(widthF, yR(30.0)), 1f)
+            val p = Path()
+            var started = false
+            for (i in first..lastI) {
+                val v = data.rsi.getOrNull(i) ?: continue
+                if (!started) {
+                    p.moveTo(xOf(i), yR(v))
+                    started = true
+                } else {
+                    p.lineTo(xOf(i), yR(v))
+                }
+            }
+            if (started) drawPath(p, RsiC, style = Stroke(1.4f, cap = StrokeCap.Round))
+            drawIntoCanvas {
+                val lv = data.rsi.getOrNull(lastI)
+                val txt = "RSI(14)" + (lv?.let { " " + String.format(Locale.US, "%.1f", it) } ?: "")
+                it.nativeCanvas.drawText(txt, 8f, rsiTop + 11f * d, rsiPaint)
+            }
+        }
+
+        // trend lines
+        for (ln in lines) {
+            val x1 = xOfF(ln.x1)
+            val y1 = yOf(ln.p1)
+            val x2 = xOfF(ln.x2)
+            val y2 = yOf(ln.p2)
+            drawLine(DrawC, Offset(x1, y1), Offset(x2, y2), 1.6f)
+            drawCircle(DrawC, 3f, Offset(x1, y1))
+            drawCircle(DrawC, 3f, Offset(x2, y2))
+        }
+        preview?.let { (s, e) ->
+            drawLine(DrawC.copy(alpha = 0.6f), s, e, 1.4f)
         }
 
         // last price line + right tag
@@ -266,10 +379,9 @@ fun CandleChart(data: ChartUi, modifier: Modifier = Modifier) {
 
         // crosshair
         cross?.let { cp ->
-            drawLine(CrossC.copy(alpha = 0.7f), Offset(cp.x, priceTop), Offset(cp.x, volBase), 1f)
+            drawLine(CrossC.copy(alpha = 0.7f), Offset(cp.x, priceTop), Offset(cp.x, crossBottom), 1f)
             drawLine(CrossC.copy(alpha = 0.7f), Offset(0f, cp.y), Offset(widthF, cp.y), 1f)
             val idx = (left + cp.x / pxPer).toInt().coerceIn(0, list.size - 1)
-            val hc = list[idx]
             val yy = cp.y.coerceIn(priceTop, priceBottom)
             val hv = loP + (priceBottom - yy) / priceH * (hiP - loP)
             drawIntoCanvas {
@@ -278,7 +390,7 @@ fun CandleChart(data: ChartUi, modifier: Modifier = Modifier) {
                 it.nativeCanvas.drawRect(widthF - tw - 12f, yy - 10f * d, widthF, yy + 10f * d, tagBgPaint)
                 it.nativeCanvas.drawText(pt, widthF - tw - 6f, yy + 4f * d, tagTextPaint)
 
-                val tt = tf.format(Date(hc.openTime))
+                val tt = tf.format(Date(list[idx].openTime))
                 val ttw = labelPaint.measureText(tt)
                 it.nativeCanvas.drawRect(cp.x - ttw / 2 - 8f, h - 18f * d, cp.x + ttw / 2 + 8f, h.toFloat(), tagBgPaint)
                 it.nativeCanvas.drawText(tt, cp.x - ttw / 2, h - 6f * d, tagTextPaint)

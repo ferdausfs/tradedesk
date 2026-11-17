@@ -25,6 +25,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material3.Button
@@ -32,11 +33,11 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -54,10 +55,12 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.ferdausfs.tradedesk.chart.CandleChart
 import com.ferdausfs.tradedesk.chart.ChartUi
+import com.ferdausfs.tradedesk.data.TrendLine
 import com.ferdausfs.tradedesk.chart.fmtPrice
 import com.ferdausfs.tradedesk.data.Alert
 import com.ferdausfs.tradedesk.data.bollinger
 import com.ferdausfs.tradedesk.data.ema
+import com.ferdausfs.tradedesk.data.rsi
 import com.ferdausfs.tradedesk.data.Prefs
 import kotlinx.coroutines.delay
 import java.util.Locale
@@ -76,10 +79,16 @@ fun MainScreen() {
     val ticker by vm.ticker.collectAsState()
     val emaOn by vm.emaOn.collectAsState()
     val bbOn by vm.bbOn.collectAsState()
+    val rsiOn by vm.rsiOn.collectAsState()
     val watchlist by vm.watchlist.collectAsState()
     val tickers by vm.tickers.collectAsState()
     val allSymbols by vm.allSymbols.collectAsState()
     val alerts by vm.alerts.collectAsState()
+    val replay by vm.replay.collectAsState()
+    val replayIdx by vm.replayIdx.collectAsState()
+    val playingReplay by vm.playing.collectAsState()
+    val lines by vm.lines.collectAsState()
+    val drawMode by vm.drawMode.collectAsState()
 
     var sheet by remember { mutableStateOf<String?>(null) }
 
@@ -98,9 +107,12 @@ fun MainScreen() {
         }
     }
 
-    val lastC = candles.lastOrNull()
+    val displayCandles =
+        if (replay) candles.take(replayIdx.coerceAtLeast(1)) else candles
+    val lastC = displayCandles.lastOrNull()
     val livePrice = lastC?.close ?: ticker?.last ?: 0.0
-    val priceColor = if (ticker == null) TextC else if ((ticker?.changePct ?: 0.0) >= 0) UpC else DownC
+    val priceColor =
+        if (ticker == null) TextC else if ((ticker?.changePct ?: 0.0) >= 0) UpC else DownC
 
     Column(Modifier.fillMaxSize().background(Bg)) {
 
@@ -115,6 +127,7 @@ fun MainScreen() {
                 fontSize = 16.sp,
                 modifier = Modifier.clickable { sheet = "search" }.padding(6.dp)
             )
+            Text("Binance", color = MutedC, fontSize = 10.sp, modifier = Modifier.padding(start = 2.dp))
             Column(Modifier.padding(start = 6.dp)) {
                 Text(fmtPrice(livePrice), color = priceColor, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                 Text(fmtPct(ticker?.changePct), color = pctColor(ticker?.changePct), fontSize = 10.sp)
@@ -149,6 +162,35 @@ fun MainScreen() {
             Spacer(Modifier.width(8.dp))
             IndicatorChip("EMA", emaOn) { vm.toggleEma() }
             IndicatorChip("BB", bbOn) { vm.toggleBb() }
+            IndicatorChip("RSI", rsiOn) { vm.toggleRsi() }
+            IndicatorChip("Replay", replay) { vm.toggleReplay() }
+            IconButton(onClick = { vm.toggleDraw() }, modifier = Modifier.size(32.dp)) {
+                Icon(
+                    Icons.Filled.Edit,
+                    contentDescription = null,
+                    tint = if (drawMode) AccentC else MutedC
+                )
+            }
+        }
+
+        if (replay) {
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                SmallBtn("⟲") { vm.resetReplay() }
+                Spacer(Modifier.width(4.dp))
+                SmallBtn(if (playingReplay) "⏸" else "▶") { vm.playPauseReplay() }
+                Spacer(Modifier.width(4.dp))
+                SmallBtn("▶▶") { vm.stepReplay() }
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "${replayIdx.coerceAtMost(candles.size)} / ${candles.size}",
+                    color = MutedC, fontSize = 11.sp
+                )
+                Spacer(Modifier.weight(1f))
+                SmallBtn("Exit") { vm.toggleReplay() }
+            }
         }
 
         Text(
@@ -161,23 +203,44 @@ fun MainScreen() {
         )
 
         Box(Modifier.weight(1f).fillMaxWidth()) {
-            val chartData = remember(candles, emaOn, bbOn, interval) {
-                val closes = candles.map { it.close }
-                val bb = if (bbOn) bollinger(closes) else Triple(emptyList<Double?>(), emptyList<Double?>(), emptyList<Double?>())
+            val chartData = remember(displayCandles, emaOn, bbOn, rsiOn, interval) {
+                val closes = displayCandles.map { it.close }
+                val bb =
+                    if (bbOn) bollinger(closes)
+                    else Triple(
+                        emptyList<Double?>(), emptyList<Double?>(), emptyList<Double?>()
+                    )
                 ChartUi(
-                    candles = candles,
+                    candles = displayCandles,
                     ema = if (emaOn) ema(closes, 21) else emptyList(),
                     bbUpper = if (bbOn) bb.first else emptyList(),
                     bbLower = if (bbOn) bb.third else emptyList(),
+                    rsi = if (rsiOn) rsi(closes) else emptyList(),
                     daily = interval == "1d" || interval == "1w"
                 )
             }
-            CandleChart(chartData, Modifier.fillMaxSize())
+            CandleChart(
+                chartData,
+                lines = lines,
+                drawMode = drawMode,
+                onDrawLine = { x1, p1, x2, p2 -> vm.addLine(x1, p1, x2, p2) },
+                Modifier.fillMaxSize()
+            )
             if (loading) {
                 CircularProgressIndicator(
                     Modifier.align(Alignment.Center).size(28.dp),
                     color = AccentC, strokeWidth = 2.dp
                 )
+            }
+            if (drawMode) {
+                Row(
+                    Modifier.align(Alignment.TopEnd).padding(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    SmallBtn("Undo") { vm.undoLine() }
+                    Spacer(Modifier.width(4.dp))
+                    SmallBtn("Clear") { vm.clearLines() }
+                }
             }
         }
     }
@@ -193,7 +256,7 @@ fun MainScreen() {
 private fun IndicatorChip(label: String, active: Boolean, onClick: () -> Unit) {
     Text(
         label,
-        color = if (active) Bg else MutedC,
+        color = if (active) Bg else TextC,
         fontSize = 12.sp,
         fontWeight = FontWeight.Bold,
         modifier = Modifier
@@ -201,6 +264,20 @@ private fun IndicatorChip(label: String, active: Boolean, onClick: () -> Unit) {
             .background(if (active) AccentC else PanelC, MaterialTheme.shapes.small)
             .clickable(onClick = onClick)
             .padding(horizontal = 10.dp, vertical = 6.dp)
+    )
+}
+
+@Composable
+private fun SmallBtn(label: String, onClick: () -> Unit) {
+    Text(
+        label,
+        color = TextC,
+        fontSize = 12.sp,
+        fontWeight = FontWeight.Bold,
+        modifier = Modifier
+            .background(PanelC, MaterialTheme.shapes.small)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 4.dp)
     )
 }
 
